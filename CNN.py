@@ -36,9 +36,7 @@ val_loader = DataLoader(val_data, batch_size=batch_size)
 classes = train_data.classes
 print("Classes:", classes)
 
-# ==============================
-# 3. Model setup
-# ==============================
+
 model = models.resnet18(weights="IMAGENET1K_V1")
 model.fc = nn.Linear(model.fc.in_features, len(classes))
 model = model.to(device)
@@ -46,9 +44,6 @@ model = model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-# ==============================
-# 4. Training loop
-# ==============================
 for epoch in range(num_epochs):
     model.train()
     total_loss = 0
@@ -103,9 +98,3 @@ def predict_probs(model, img_paths):
         probs_list.append(probs)
     return np.array(probs_list)
 
-# Example usage:
-# test_images = ["PlatelImages/24.jpg", "PlatelImages/48.jpg"]
-# prob_matrix = predict_probs(model, test_images)
-# df = pd.DataFrame(prob_matrix, columns=classes, index=test_images)
-# print(df)
-# df.to_csv("prediction_matrix.csv")

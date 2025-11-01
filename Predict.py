@@ -48,7 +48,7 @@ def predict_image(img_path):
     return probs
 
 
-img_path = "PlateImages/96.jpg"  # replace with your test image
+img_path = "PlateImages/96.jpg" 
 probs = predict_image(img_path)
 
 df = pd.DataFrame([probs], columns=classes)
