@@ -48,7 +48,7 @@ def predict_image(img_path):
     return probs
 
 
-img_path = "PlateImages/96.jpg" 
+img_path = r"C:\Users\mercu\Desktop\ipys\ASRfinal\OT2ColorMatchingEnhanced\PlateImages\Colors\IMG_7876.jpg"
 probs = predict_image(img_path)
 
 df = pd.DataFrame([probs], columns=classes)
