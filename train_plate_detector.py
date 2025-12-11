@@ -1,120 +1,168 @@
-# train_plate_detector.py
-import torch, torch.nn as nn
+import os
+import random
+
+import torch
+from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from PIL import Image
-import pandas as pd
-import numpy as np
-from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-CSV_PATH = "dataset_labels.csv"
-IMG_DIR   = Path("PlateImages")
-SAVE_PATH = "plate_model_resnet18.pth"
-BATCH_SIZE, LR, EPOCHS = 8, 1e-4, 30
-# 统一网络输入尺寸（与你的相机比例一致）
-IN_H, IN_W = 1080, 1920
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DATA_ROOT = "dataset/train"
+
+classes = ["nothing", "1", "6", "12", "24", "48", "96", "384"]
+class_to_idx = {c: i for i, c in enumerate(classes)}
+
+IMG_SIZE = 400
+BATCH_SIZE = 16
+LR = 1e-4
+EPOCHS = 40
+
+# 固定随机种子，训练更稳定
+torch.manual_seed(42)
+random.seed(42)
+
+imagenet_mean = [0.485, 0.456, 0.406]
+imagenet_std  = [0.229, 0.224, 0.225]
+
 
 class PlateDataset(Dataset):
-    def __init__(self, df, img_dir, class_names, transform=None):
-        self.df = df.reset_index(drop=True)
-        self.dir = img_dir
+    """Simple image classification dataset."""
+
+    def __init__(self, files, labels, transform):
+        self.files = list(files)
+        self.labels = list(labels)
         self.transform = transform
-        self.class_names = class_names
-        self.cls2idx = {c:i for i,c in enumerate(class_names)}
 
-    def __len__(self): return len(self.df)
+    def __len__(self):
+        return len(self.files)
 
-    def __getitem__(self, i):
-        r   = self.df.iloc[i]
-        img = Image.open(self.dir / r.file_name).convert("RGB")
-        w0, h0 = img.size
+    def __getitem__(self, idx):
+        img = Image.open(self.files[idx]).convert("RGB")
+        img = self.transform(img)
+        label = self.labels[idx]
+        return img, label
 
-        # 先 resize 到网络输入尺寸
-        img_resized = img.resize((IN_W, IN_H), Image.BILINEAR)
 
-        # 同步缩放角点到 (IN_W, IN_H)
-        sx, sy = IN_W / w0, IN_H / h0
-        coords = np.array([r.x1, r.y1, r.x2, r.y2, r.x3, r.y3, r.x4, r.y4], np.float32)
-        coords[0::2] *= sx
-        coords[1::2] *= sy
-        # 再归一化到 0~1（相对于网络输入尺寸）
-        coords_norm = coords / np.array([IN_W, IN_H, IN_W, IN_H, IN_W, IN_H, IN_W, IN_H], np.float32)
+# ------------------------- load all files -------------------------
+all_files = []
+all_labels = []
 
-        if self.transform:
-            img_tensor = self.transform(img_resized)
-        else:
-            img_tensor = transforms.ToTensor()(img_resized)
+for cls in classes:
+    folder = os.path.join(DATA_ROOT, cls)
+    if not os.path.isdir(folder):
+        continue
+    for fname in os.listdir(folder):
+        if fname.lower().endswith((".jpg", ".jpeg", ".png")):
+            all_files.append(os.path.join(folder, fname))
+            all_labels.append(class_to_idx[cls])
 
-        y_cls = self.cls2idx[str(r.plate_type)]
-        return img_tensor, torch.tensor(y_cls), torch.tensor(coords_norm, dtype=torch.float32), (w0, h0)
+# 洗牌
+combined = list(zip(all_files, all_labels))
+random.shuffle(combined)
+all_files, all_labels = zip(*combined)
 
+# train / val
+train_files, val_files, train_labels, val_labels = train_test_split(
+    all_files,
+    all_labels,
+    test_size=0.15,
+    stratify=all_labels,
+    random_state=42,
+)
+
+# ------------------------- transforms -------------------------
 train_tf = transforms.Compose([
-    transforms.ColorJitter(brightness=0.35, contrast=0.35, saturation=0.25, hue=0.08),
+    # 随机裁到中间区域，尽量让网络关注 plate 而不是左右金属背景
+    transforms.RandomResizedCrop(
+        IMG_SIZE,
+        scale=(0.75, 1.0),
+        ratio=(0.9, 1.1),
+    ),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.ColorJitter(
+        brightness=0.2,
+        contrast=0.2,
+        saturation=0.2,
+    ),
+    transforms.RandomRotation(5),
     transforms.ToTensor(),
-    transforms.Normalize([0.5]*3, [0.5]*3),
+    transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
 ])
+
 val_tf = transforms.Compose([
+    # 先放大一点再中心裁剪，和训练时的 “关注中间区域” 保持一致
+    transforms.Resize(int(IMG_SIZE * 1.2)),
+    transforms.CenterCrop(IMG_SIZE),
     transforms.ToTensor(),
-    transforms.Normalize([0.5]*3, [0.5]*3),
+    transforms.Normalize(mean=imagenet_mean, std=imagenet_std),
 ])
 
-class PlateNet(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        m = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-        in_f = m.fc.in_features
-        m.fc = nn.Identity()
-        self.backbone = m
-        self.cls = nn.Linear(in_f, num_classes)
-        self.reg = nn.Linear(in_f, 8)
+train_ds = PlateDataset(train_files, train_labels, train_tf)
+val_ds   = PlateDataset(val_files, val_labels, val_tf)
 
-    def forward(self, x):
-        f = self.backbone(x)
-        return self.cls(f), torch.sigmoid(self.reg(f))
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
+val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
 
-def train():
-    df = pd.read_csv(CSV_PATH)
-    # 用训练集里的 plate_type 列构造“确定顺序”的类别表，并保存到模型
-    class_names = sorted(df['plate_type'].astype(str).unique().tolist())
+# ------------------------- model -------------------------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tr_df, va_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['plate_type'])
-    tr_ds = PlateDataset(tr_df, IMG_DIR, class_names, train_tf)
-    va_ds = PlateDataset(va_df, IMG_DIR, class_names, val_tf)
-    tr_dl = DataLoader(tr_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=2)
-    va_dl = DataLoader(va_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 
-    model = PlateNet(num_classes=len(class_names)).to(DEVICE)
-    opt   = torch.optim.Adam(model.parameters(), lr=LR)
-    ce    = nn.CrossEntropyLoss()
-    l1    = nn.SmoothL1Loss()
+in_features = model.fc.in_features
+model.fc = nn.Sequential(
+    nn.Dropout(0.3),
+    nn.Linear(in_features, len(classes))
+)
 
-    print(f"Classes: {class_names}")
-    for e in range(1, EPOCHS+1):
-        model.train(); tc=tr=0.0
-        for x,y,xy,_ in tr_dl:
-            x,y,xy = x.to(DEVICE), y.to(DEVICE), xy.to(DEVICE)
-            opt.zero_grad()
-            c,p = model(x)
-            lc, lr = ce(c,y), l1(p, xy)
-            (lc + 3.0*lr).backward(); opt.step()
-            tc += lc.item(); tr += lr.item()
-        model.eval(); vc=vr=0.0
-        with torch.no_grad():
-            for x,y,xy,_ in va_dl:
-                x,y,xy = x.to(DEVICE), y.to(DEVICE), xy.to(DEVICE)
-                c,p = model(x); vc += ce(c,y).item(); vr += l1(p,xy).item()
-        print(f"Epoch {e:02d}/{EPOCHS} | Train(C,R): {tc/len(tr_dl):.3f},{tr/len(tr_dl):.3f} | "
-              f"Val(C,R): {vc/len(va_dl):.3f},{vr/len(va_dl):.3f}")
+model = model.to(device)
 
-    # 保存模型 + 类别表 + 输入尺寸
-    torch.save({
-        "state_dict": model.state_dict(),
-        "class_names": class_names,
-        "input_size": (IN_H, IN_W),
-    }, SAVE_PATH)
-    print(f"✅ saved -> {SAVE_PATH}")
+# label_smoothing 可以稍微缓解过拟合
+criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+optimizer = optim.Adam(model.parameters(), lr=LR)
 
-if __name__ == "__main__":
-    train()
+# ------------------------- train loop -------------------------
+for epoch in range(EPOCHS):
+    model.train()
+    running_loss = 0.0
+
+    for imgs, labels in train_loader:
+        imgs = imgs.to(device)
+        labels = labels.to(device)
+
+        optimizer.zero_grad()
+        outputs = model(imgs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+
+    # ---- validation ----
+    model.eval()
+    val_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for imgs, labels in val_loader:
+            imgs = imgs.to(device)
+            labels = labels.to(device)
+
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
+            val_loss += loss.item()
+
+            _, predicted = torch.max(outputs, 1)
+            correct += (predicted == labels).sum().item()
+            total += labels.size(0)
+
+    print(
+        f"Epoch {epoch+1}/{EPOCHS} "
+        f"| Train Loss {running_loss/len(train_loader):.4f} "
+        f"| Val Loss {val_loss/len(val_loader):.4f} "
+        f"| Val Acc {correct/total:.3f}"
+    )
+
+torch.save(model.state_dict(), "plate_model_resnet18_colorRing.pth")
+print("Model saved.")
