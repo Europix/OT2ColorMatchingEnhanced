@@ -4,7 +4,7 @@ This project implements an computer vision pipeline for microplate images, focus
 
 ---
 
-## 1. Credentials / Dependencies
+## Dependencies
 
 ### Python
 - Python **3.9 – 3.11** recommended  
@@ -25,23 +25,23 @@ pip install numpy opencv-python torch torchvision pillow pandas matplotlib pupil
 
 ---
 
-## 2. Project Structure
+## Project Structure
 
 ```
 .
-├── plate.py                             # Main end-to-end pipeline
+├── plate.py                             # Pipeline
 ├── plate_model_resnet18_colorRing.pth   # Trained CNN (plate type classifier)
-├── vis_96well_from_csv.py               # CSV → 96-well visualization
-├── Fixed*_well_colors.csv               # Example outputs
-├── images/                              # Input images
+├── output_debug.py                      # visualization
+├── Fixed3.csv               
+├── images/                              
 └── README.md
 ```
 
 ---
 
-## 3. Pipeline Overview (How It Works)
+## Pipeline
 
-### Step 1 – Plate Type Classification (CNN)
+### Plate Type Classification (CNN)
 - A **ResNet-18** model classifies the plate type from the **entire image**
 - Output: probability distribution over  
   `nothing, 1, 6, 12, 24, 48, 96, 384`
@@ -50,16 +50,16 @@ This determines the expected **grid shape** (e.g. 96-well → 8×12).
 
 ---
 
-### Step 2 – AprilTag Detection
+### AprilTag Detection
 - Detect four `tag36h11` AprilTags (IDs **0,1,2,3**)
-- Extract each tag’s **center in pixel coordinates**
+- Extract each tag’s center in pixel coordinates
 
-These tags provide a **stable reference frame**, independent of resolution, rotation, or scale.
+These tags provide a stable reference frame, independent of resolution, rotation, or scale.
 
 ---
 
-### Step 3 – Homography Estimation
-- Known **design-space tag layout** is matched to detected tag centers
+### Homography Estimation
+- Known design-space tag layout is matched to detected tag centers
 - A homography is computed:
 
 ```
@@ -70,11 +70,11 @@ This allows any logical plate coordinate (corners, grid points, color patches) t
 
 ---
 
-### Step 4 – Plate Geometry & Grid Fitting
+### Plate Geometry & Grid Fitting
 Using the homography:
 
 - Project outer plate rectangle (debug: green)
-- Compute inner “valid well” rectangle using **normalized margins**
+- Compute inner “valid well” rectangle using normalized margins
 - Generate a uniform grid inside the inner rectangle
 - Project grid centers into image space (debug: blue dots)
 
@@ -82,7 +82,7 @@ This avoids brittle pixel-based heuristics.
 
 ---
 
-### Step 5 – Color Calibration
+### Color Calibration
 The color ring provides reference patches:
 
 - Top & bottom color bars
@@ -90,7 +90,7 @@ The color ring provides reference patches:
 
 For each patch:
 - Mean BGR is sampled
-- A **linear affine color transform** is fitted:
+- A linear affine color transform is fitted:
 
 ```
 [B, G, R, 1] → [B', G', R']
@@ -98,11 +98,11 @@ For each patch:
 
 Goal:
 - Reduce lighting bias
-- Improve **relative color consistency** across wells
+- Improve relative color consistency across wells
 
 ---
 
-### Step 6 – Per-Well Color Extraction
+### Per-Well Color Extraction
 - Sample each well center
 - Apply color calibration
 - Save calibrated BGR values to CSV
@@ -115,7 +115,7 @@ C3,42.1,97.3,211.8
 ---
 
 ### Step 7 – Visualization (Optional)
-A helper script renders a **96-well plate map** from the CSV.
+A helper script renders a 96-well plate map from the CSV.
 
 Used for:
 - Alignment debugging
@@ -124,9 +124,9 @@ Used for:
 
 ---
 
-## 4. How to Run
+## Run Details
 
-### Run Full Pipeline
+### Run Pipeline
 ```
 python plate.py path/to/image.jpg
 ```
@@ -144,7 +144,7 @@ python output_debug.py your_csv
 
 ---
 
-## 5. Known Limitations
+## Known Limitations
 
 - Physical margins vary across plate brands and types
 - Side-wall reflections can dominate color in some wells
