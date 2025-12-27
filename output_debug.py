@@ -54,7 +54,7 @@ def main(csv_path, out_path="plate_96well_vis.png"):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python vis_96well_from_csv.py Fixed3_well_colors.csv [out.png]")
+        print("Usage: python output_debug.py Fixed3_well_colors.csv [out.png]")
         sys.exit(0)
     csv_path = sys.argv[1]
     out_path = sys.argv[2] if len(sys.argv) >= 3 else "plate_96well_vis.png"

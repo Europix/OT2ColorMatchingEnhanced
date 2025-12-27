@@ -159,7 +159,7 @@ def design_grid_centers(rows, cols):
 
     w = x1 - x0
     h = y1 - y0
-    xs = x0 + (np.arange(cols) + 0.5) * (w / cols)
+    xs = x1 - (np.arange(cols) + 0.5) * (w / cols)
     ys = y0 + (np.arange(rows) + 0.5) * (h / rows)
     return np.array([[x, y] for y in ys for x in xs], dtype=np.float32)
 
